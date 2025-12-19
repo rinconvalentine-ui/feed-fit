@@ -2,3 +2,5 @@ streamlit
 pillow
 numpy
 scikit-learn
+supabase
+requests
