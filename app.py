@@ -516,66 +516,164 @@ with tab2:
 
 
 # -------------------------
-# TAB 3: FOLLOWERS/FOLLOWING (EXCEL)
+# TAB 3: FOLLOWERS/FOLLOWING (EXCEL ou CSV)
 # -------------------------
 with tab3:
-    st.subheader("Abonnés — Comparer Followers vs Following (Excel)")
-    st.markdown("""
-✅ Upload **1 fichier .xlsx** contenant **2 feuilles** :
-- `Followers`
-- `Following`
+    st.subheader("Abonnés — Comparer Followers vs Following (Excel ou CSV)")
 
-Dans chaque feuille : **colonne A** = usernames (avec ou sans @).  
-(Le nom des feuilles peut être `followers`, `FOLLOWERS`, etc. → c’est OK.)
+    st.markdown("""
+### Option A (recommandé) : CSV (ça marche toujours)
+- Upload `followers.csv` (1 colonne : usernames)
+- Upload `following.csv` (1 colonne : usernames)
+
+### Option B : Excel (.xlsx)
+- 1 fichier `.xlsx` avec 2 feuilles : `Followers` et `Following`
+- Colonne A = usernames (avec ou sans @)
 """)
 
-    xls = st.file_uploader("Upload ton fichier Excel (.xlsx)", type=["xlsx"], key="xls_follow")
-    if xls:
+    def is_real_xlsx(uploaded_file) -> bool:
+        # Un vrai .xlsx est un ZIP → commence par PK
         try:
-            sheets = pd.read_excel(xls, sheet_name=None)
-            s_followers = find_sheet(sheets, "Followers")
-            s_following = find_sheet(sheets, "Following")
+            head = uploaded_file.getvalue()[:2]
+            return head == b"PK"
+        except Exception:
+            return False
 
-            if not s_followers or not s_following:
-                st.error("Je ne trouve pas les feuilles Followers / Following. Vérifie l’orthographe.")
-            else:
-                followers = extract_usernames_from_sheet(sheets[s_followers])
-                following = extract_usernames_from_sheet(sheets[s_following])
+    def read_single_column_csv(file):
+        df = pd.read_csv(file, header=None)
+        s = df.iloc[:, 0].astype(str).str.strip()
+        s = s[s != ""]
+        s = s.str.replace("@", "", regex=False).str.lower()
+        s = s[s != "nan"]
+        return sorted(set(s.tolist()))
 
-                set_fol = set(followers)
-                set_ing = set(following)
+    st.write("### Option A — Upload CSV")
+    col_csv1, col_csv2 = st.columns(2)
+    with col_csv1:
+        followers_csv = st.file_uploader("Upload followers.csv", type=["csv"], key="followers_csv")
+    with col_csv2:
+        following_csv = st.file_uploader("Upload following.csv", type=["csv"], key="following_csv")
 
-                not_following_back = sorted(list(set_ing - set_fol))   # tu les suis, ils te suivent pas
-                you_dont_follow_back = sorted(list(set_fol - set_ing)) # ils te suivent, tu les suis pas
-                mutuals = sorted(list(set_fol & set_ing))
+    if followers_csv and following_csv:
+        try:
+            followers = read_single_column_csv(followers_csv)
+            following = read_single_column_csv(following_csv)
 
-                colA, colB, colC = st.columns(3)
-                colA.metric("Followers", len(followers))
-                colB.metric("Following", len(following))
-                colC.metric("Mutuels", len(mutuals))
+            set_fol = set(followers)
+            set_ing = set(following)
 
-                st.write("### 1) Tu suis MAIS ils ne te suivent pas (non-mutuel)")
-                st.dataframe(pd.DataFrame({"username": not_following_back}), use_container_width=True)
+            not_following_back = sorted(list(set_ing - set_fol))
+            you_dont_follow_back = sorted(list(set_fol - set_ing))
+            mutuals = sorted(list(set_fol & set_ing))
 
-                st.write("### 2) Ils te suivent MAIS tu ne les suis pas")
-                st.dataframe(pd.DataFrame({"username": you_dont_follow_back}), use_container_width=True)
+            colA, colB, colC = st.columns(3)
+            colA.metric("Followers", len(followers))
+            colB.metric("Following", len(following))
+            colC.metric("Mutuels", len(mutuals))
 
-                st.write("### Export")
-                out = pd.DataFrame({
-                    "not_following_back": pd.Series(not_following_back),
-                    "you_dont_follow_back": pd.Series(you_dont_follow_back),
-                    "mutuals": pd.Series(mutuals)
-                })
-                st.download_button(
-                    "Télécharger résultat CSV",
-                    data=out.to_csv(index=False).encode("utf-8"),
-                    file_name="instagram_follow_compare.csv",
-                    mime="text/csv"
-                )
+            st.write("### 1) Tu suis MAIS ils ne te suivent pas")
+            st.dataframe(pd.DataFrame({"username": not_following_back}), use_container_width=True)
+
+            st.write("### 2) Ils te suivent MAIS tu ne les suis pas")
+            st.dataframe(pd.DataFrame({"username": you_dont_follow_back}), use_container_width=True)
+
+            out = pd.DataFrame({
+                "not_following_back": pd.Series(not_following_back),
+                "you_dont_follow_back": pd.Series(you_dont_follow_back),
+                "mutuals": pd.Series(mutuals)
+            })
+            st.download_button(
+                "Télécharger résultat CSV",
+                data=out.to_csv(index=False).encode("utf-8"),
+                file_name="instagram_follow_compare.csv",
+                mime="text/csv"
+            )
+            st.success("Analyse OK ✅ (CSV)")
+
         except Exception as e:
-            st.error("Erreur lecture Excel. Essaye de ré-enregistrer ton fichier en .xlsx (pas .xls).")
+            st.error(f"Erreur lecture CSV : {e}")
 
+    st.divider()
 
+    st.write("### Option B — Upload Excel (.xlsx)")
+    xls = st.file_uploader("Upload ton fichier Excel (.xlsx)", type=["xlsx"], key="xls_follow")
+
+    if xls:
+        if not is_real_xlsx(xls):
+            st.error("Ton fichier n’est PAS un vrai .xlsx (il ne commence pas par 'PK'). ➜ Exporte en .xlsx depuis Excel, ou utilise les 2 CSV (option A).")
+        else:
+            try:
+                # Force openpyxl
+                sheets = pd.read_excel(xls, sheet_name=None, engine="openpyxl")
+
+                def normalize_sheet_name(x):
+                    return re.sub(r"\s+", "", str(x).strip().lower())
+
+                def find_sheet(df_dict, wanted):
+                    want = normalize_sheet_name(wanted)
+                    for k in df_dict.keys():
+                        if normalize_sheet_name(k) == want:
+                            return k
+                    return None
+
+                def extract_usernames_from_sheet(df):
+                    if df is None or df.empty:
+                        return []
+                    cols = [str(c).strip().lower() for c in df.columns]
+                    if "username" in cols:
+                        s = df[df.columns[cols.index("username")]]
+                    else:
+                        s = df.iloc[:, 0]
+                    s = s.astype(str).str.strip()
+                    s = s[s != ""]
+                    s = s.str.replace("@", "", regex=False)
+                    s = s.str.lower()
+                    s = s[s != "nan"]
+                    return sorted(set(s.tolist()))
+
+                s_followers = find_sheet(sheets, "Followers")
+                s_following = find_sheet(sheets, "Following")
+
+                if not s_followers or not s_following:
+                    st.error(f"Feuilles trouvées: {list(sheets.keys())}\n\nJe ne trouve pas 'Followers' + 'Following'. Renomme-les exactement ou utilise CSV.")
+                else:
+                    followers = extract_usernames_from_sheet(sheets[s_followers])
+                    following = extract_usernames_from_sheet(sheets[s_following])
+
+                    set_fol = set(followers)
+                    set_ing = set(following)
+
+                    not_following_back = sorted(list(set_ing - set_fol))
+                    you_dont_follow_back = sorted(list(set_fol - set_ing))
+                    mutuals = sorted(list(set_fol & set_ing))
+
+                    colA, colB, colC = st.columns(3)
+                    colA.metric("Followers", len(followers))
+                    colB.metric("Following", len(following))
+                    colC.metric("Mutuels", len(mutuals))
+
+                    st.write("### 1) Tu suis MAIS ils ne te suivent pas")
+                    st.dataframe(pd.DataFrame({"username": not_following_back}), use_container_width=True)
+
+                    st.write("### 2) Ils te suivent MAIS tu ne les suis pas")
+                    st.dataframe(pd.DataFrame({"username": you_dont_follow_back}), use_container_width=True)
+
+                    out = pd.DataFrame({
+                        "not_following_back": pd.Series(not_following_back),
+                        "you_dont_follow_back": pd.Series(you_dont_follow_back),
+                        "mutuals": pd.Series(mutuals)
+                    })
+                    st.download_button(
+                        "Télécharger résultat CSV",
+                        data=out.to_csv(index=False).encode("utf-8"),
+                        file_name="instagram_follow_compare.csv",
+                        mime="text/csv"
+                    )
+                    st.success("Analyse OK ✅ (Excel)")
+
+            except Exception as e:
+                st.error(f"Erreur lecture Excel (openpyxl) : {e}")
+                st.info("➡️ Utilise l’Option A (2 CSV) : followers.csv + following.csv (c’est le plus fiable).")
 # -------------------------
 # TAB 4: POSTS & LIKES (MANUEL)
 # -------------------------
